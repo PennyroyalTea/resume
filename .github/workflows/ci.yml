@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Validate script
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Compile Python
+        run: python3 -m py_compile resume
+
+      - name: Smoke test CLI flags
+        run: |
+          ./resume --help
+          ./resume --version
+
+      - name: Build Python package
+        run: |
+          python3 -m pip install build
+          python3 -m build

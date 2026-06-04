@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate tag matches script version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          script_version="$(./resume --version | awk '{print $2}')"
+          test "$tag_version" = "$script_version"
+
+      - name: Compile Python
+        run: python3 -m py_compile resume
+
+      - name: Build release artifacts
+        run: |
+          chmod +x resume
+          sha256sum resume > resume.sha256
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            resume resume.sha256 \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Install with: curl -fsSL https://github.com/PennyroyalTea/resume/releases/download/$GITHUB_REF_NAME/resume -o ~/.local/bin/resume && chmod +x ~/.local/bin/resume"
