@@ -142,11 +142,18 @@
   }
   .bar i{ width:10px; height:10px; border-radius:50%; background:var(--dot); }
 
-  .body{ padding:15px 16px 17px; font-size:13px; line-height:1.55; overflow-x:auto; }
-  .meta{ color:var(--dim); }
+  .body{ position:relative; padding:15px 16px 17px; font-size:13px; line-height:1.55; overflow-x:auto; min-height:306px; }
+  .meta{ color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .meta b{ color:var(--fg); font-weight:700; }
   .count{ color:var(--faint); }
-  .list{ margin-top:11px; display:flex; flex-direction:column; min-height:202px; }
+  .picker-top[hidden], .shell[hidden], .list[hidden]{ display:none; }
+  .list{ margin-top:11px; height:202px; display:flex; flex-direction:column; }
+  .shell{ position:absolute; top:15px; left:16px; right:16px; height:202px; color:var(--dim); overflow:hidden; }
+  .shell b{ color:var(--fg); font-weight:700; }
+  .shell .prompt{ color:var(--accent); user-select:none; }
+  .shell .input{ color:var(--fg); }
+  .shell .cursor{ color:var(--fg); animation:blink 1s steps(1,end) infinite; }
+  @keyframes blink{ 50%{ opacity:0; } }
 
   .item{ padding:5px 9px; border-radius:5px; cursor:pointer; }
   .item[hidden]{ display:none; }
@@ -232,7 +239,7 @@
     <header class="head">
       <div>
         <div class="wordmark">resume</div>
-        <p class="sub">one picker for your Codex and Claude&nbsp;Code sessions</p>
+        <p class="sub">your Codex and Claude&nbsp;Code sessions, in one place</p>
       </div>
       <button class="theme" id="theme" type="button" aria-label="Switch between light and dark theme" title="Toggle theme">
         <span class="icon-moon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
@@ -245,24 +252,31 @@
         <i></i><i></i><i></i>
       </div>
       <div class="body">
-        <div class="meta"><b>resume</b> &nbsp;Codex + Claude sessions</div>
-        <div class="meta" id="picker-help">Enter: resume selected &nbsp; /: filter &nbsp; up/down or j/k: move &nbsp; q: quit</div>
-        <div class="count" id="picker-count">4 sessions</div>
+        <div class="picker-top" id="picker-top">
+          <div class="meta"><b>resume</b> &nbsp;Codex + Claude sessions</div>
+          <div class="meta" id="picker-help">Enter: resume selected &nbsp; /: filter &nbsp; up/down or j/k: move &nbsp; q: quit</div>
+          <div class="count" id="picker-count">4 sessions</div>
+        </div>
+
+        <div class="shell" id="shell" hidden aria-live="polite">
+          <div id="shell-output"></div>
+          <div><span class="prompt">$</span> <span class="input" id="shell-input"></span><span class="cursor">_</span></div>
+        </div>
 
         <div class="list" role="listbox" aria-label="Resume sessions">
-          <div class="item sel">
+          <div class="item sel" data-command="claude --resume demo-web-001">
             <div class="l1"><span class="mark">&gt;</span><span class="claude">Claude</span><span class="age">now</span><span class="cwd">~/code/acme-web</span></div>
             <div class="l2">double-check what codex just shipped</div>
           </div>
-          <div class="item">
+          <div class="item" data-command="codex resume demo-api-018">
             <div class="l1"><span class="mark"></span><span class="codex">Codex</span><span class="age">18m ago</span><span class="cwd">~/code/acme-api</span></div>
             <div class="l2">wire up the stripe webhook</div>
           </div>
-          <div class="item">
+          <div class="item" data-command="claude --resume demo-web-004">
             <div class="l1"><span class="mark"></span><span class="claude">Claude</span><span class="age">4h ago</span><span class="cwd">~/code/acme-web</span></div>
             <div class="l2">redesign the empty state (it's sad)</div>
           </div>
-          <div class="item">
+          <div class="item" data-command="codex resume demo-infra-002">
             <div class="l1"><span class="mark"></span><span class="codex">Codex</span><span class="age">2d ago</span><span class="cwd">~/infra</span></div>
             <div class="l2">stop the 3am pager from firing</div>
           </div>
@@ -295,11 +309,20 @@
   (function(){
     var items = Array.prototype.slice.call(document.querySelectorAll('.list .item'));
     if(items.length){
+      var list = document.querySelector('.list');
+      var pickerTop = document.getElementById('picker-top');
+      var shell = document.getElementById('shell');
+      var shellOutput = document.getElementById('shell-output');
+      var shellInput = document.getElementById('shell-input');
       var help = document.getElementById('picker-help');
       var count = document.getElementById('picker-count');
       var helpText = help ? help.innerHTML : '';
       var filtering = false;
       var query = '';
+      var shellMode = false;
+      var shellCommand = '';
+      var shellHistory = '';
+      var statusTimer = null;
       var selected = Math.max(0, items.findIndex(function(item){ return item.classList.contains('sel'); }));
 
       function escText(s){
@@ -326,6 +349,11 @@
       }
 
       function renderStatus(){
+        if(shellMode){
+          if(count) count.textContent = 'shell';
+          if(help) help.innerHTML = 'available: <b>resume</b> &nbsp; <b>resume -h</b>';
+          return;
+        }
         var shown = visibleIndexes().length;
         if(count){
           count.textContent = filtering
@@ -338,6 +366,16 @@
         }else{
           help.innerHTML = helpText;
         }
+      }
+
+      function flashStatus(html){
+        if(!help) return;
+        if(statusTimer) clearTimeout(statusTimer);
+        help.innerHTML = html;
+        statusTimer = setTimeout(function(){
+          statusTimer = null;
+          renderStatus();
+        }, 1200);
       }
 
       function renderSelection(){
@@ -378,6 +416,90 @@
         renderStatus();
       }
 
+      function renderShell(){
+        if(shellOutput) shellOutput.innerHTML = shellHistory;
+        if(shellInput) shellInput.textContent = shellCommand;
+      }
+
+      function selectedCommand(){
+        var item = items[selected];
+        if(!item || item.hidden) return '';
+        return item.getAttribute('data-command') || '';
+      }
+
+      function previewSelection(){
+        var command = selectedCommand();
+        if(!command){
+          flashStatus('no session selected');
+          return;
+        }
+        filtering = false;
+        query = '';
+        applyFilter();
+        flashStatus('<b>$</b> ' + escText(command));
+      }
+
+      function enterShell(){
+        if(statusTimer) clearTimeout(statusTimer);
+        statusTimer = null;
+        shellMode = true;
+        filtering = false;
+        query = '';
+        shellCommand = '';
+        shellHistory = '';
+        if(pickerTop) pickerTop.hidden = true;
+        if(list) list.hidden = true;
+        if(shell) shell.hidden = false;
+        applyFilter();
+        renderShell();
+      }
+
+      function exitShell(){
+        shellMode = false;
+        filtering = false;
+        query = '';
+        shellCommand = '';
+        shellHistory = '';
+        if(shell) shell.hidden = true;
+        if(pickerTop) pickerTop.hidden = false;
+        if(list) list.hidden = false;
+        applyFilter();
+        renderShell();
+      }
+
+      function runShellCommand(){
+        var raw = shellCommand;
+        var command = raw.trim().replace(/\s+/g, ' ');
+        shellHistory += '<div><span class="prompt">$</span> <span class="input">' + escText(raw) + '</span></div>';
+        shellCommand = '';
+        if(command === 'resume'){
+          exitShell();
+          return;
+        }
+        if(command === 'resume -h' || command === 'resume --help'){
+          shellHistory += '<div>usage: resume [--last] [--fork] [--provider codex|claude] [query...]</div>';
+          shellHistory += '<div>merged picker for Codex and Claude sessions</div>';
+        }else if(command){
+          shellHistory += '<div>' + escText(command.split(' ')[0]) + ': command not found</div>';
+        }
+        renderShell();
+      }
+
+      function handleShellKey(event){
+        if(event.key === 'Backspace'){
+          event.preventDefault();
+          shellCommand = shellCommand.slice(0, -1);
+          renderShell();
+        }else if(event.key === 'Enter'){
+          event.preventDefault();
+          runShellCommand();
+        }else if(event.key.length === 1){
+          event.preventDefault();
+          shellCommand += event.key;
+          renderShell();
+        }
+      }
+
       items.forEach(function(item, i){
         item.setAttribute('role', 'option');
         item.setAttribute('tabindex', '0');
@@ -387,6 +509,11 @@
 
       document.addEventListener('keydown', function(event){
         if(event.metaKey || event.ctrlKey || event.altKey) return;
+
+        if(shellMode){
+          handleShellKey(event);
+          return;
+        }
 
         if(filtering){
           if(event.key === 'ArrowDown'){
@@ -404,6 +531,9 @@
             event.preventDefault();
             query = query.slice(0, -1);
             applyFilter();
+          }else if(event.key === 'Enter'){
+            event.preventDefault();
+            previewSelection();
           }else if(event.key.length === 1){
             event.preventDefault();
             query += event.key;
@@ -423,6 +553,12 @@
         }else if(event.key === 'ArrowUp' || event.key.toLowerCase() === 'k'){
           event.preventDefault();
           moveSelected(-1);
+        }else if(event.key === 'Enter'){
+          event.preventDefault();
+          previewSelection();
+        }else if(event.key.toLowerCase() === 'q'){
+          event.preventDefault();
+          enterShell();
         }
       });
 
